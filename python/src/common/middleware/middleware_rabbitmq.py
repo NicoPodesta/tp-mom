@@ -106,7 +106,39 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
 class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
 
     def __init__(self, host, exchange_name, routing_keys):
-        pass
+        self._host = host
+        self._exchange_name = exchange_name
+        self._routing_keys = routing_keys
+        self._connection = None
+        self._channel = None
+        self._queue_name = None
+
+        try:
+            self._connection = pika.BlockingConnection(
+                pika.ConnectionParameters(host=self._host)
+            )
+            self._channel = self._connection.channel()
+            self._channel.exchange_declare(
+                exchange=self._exchange_name,
+                exchange_type="direct",
+                durable=False,
+            )
+            self._queue_name = self._channel.queue_declare(
+                queue="", exclusive=True
+            ).method.queue
+
+            for route_key in self._routing_keys:
+                self._channel.queue_bind(
+                    exchange=self._exchange_name,
+                    queue=self._queue_name,
+                    routing_key=route_key,
+                )
+
+            self._channel.basic_qos(prefetch_count=1)
+        except Exception as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"Error connecting or declaring exchange: {e}"
+            )
 
     def send(self, message):
         pass
@@ -115,7 +147,17 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
         pass
 
     def stop_consuming(self):
-        pass
+        try:
+            if self._channel and self._channel.is_open:
+                self._channel.stop_consuming()
+        except Exception as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"Connection lost while stopping consumption: {e}"
+            )
 
     def close(self):
-        pass
+        try:
+            if self._connection and self._connection.is_open:
+                self._connection.close()
+        except Exception as e:
+            raise MessageMiddlewareCloseError(f"Unexpected error while closing: {e}")
