@@ -1,10 +1,12 @@
 import pika
+from pika.exceptions import AMQPConnectionError, AMQPChannelError
 
 from .middleware import (
     MessageMiddlewareQueue,
     MessageMiddlewareExchange,
     MessageMiddlewareDisconnectedError,
     MessageMiddlewareCloseError,
+    MessageMiddlewareMessageError,
 )
 
 
@@ -17,15 +19,33 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
         self._channel = None
 
         try:
-            self._connection = pika.BlockingConnection(pika.ConnectionParameters(host=self._host))
+            self._connection = pika.BlockingConnection(
+                pika.ConnectionParameters(host=self._host)
+            )
             self._channel = self._connection.channel()
             self._channel.queue_declare(queue=self._queue_name, durable=False)
             self._channel.basic_qos(prefetch_count=1)
         except Exception as e:
-            raise MessageMiddlewareDisconnectedError(f"Error connecting or declaring queue: {e}")
+            raise MessageMiddlewareDisconnectedError(
+                f"Error connecting or declaring queue: {e}"
+            )
 
     def send(self, message):
-        pass
+        try:
+            self._channel.basic_publish(
+                exchange="",
+                routing_key=self._queue_name,
+                body=message,
+                properties=pika.BasicProperties(delivery_mode=1),
+            )
+        except (AMQPConnectionError, AMQPChannelError) as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"Connection lost while sending message: {e}"
+            )
+        except Exception as e:
+            raise MessageMiddlewareMessageError(
+                f"Unexpected error while sending message: {e}"
+            )
 
     def start_consuming(self, on_message_callback):
         pass
