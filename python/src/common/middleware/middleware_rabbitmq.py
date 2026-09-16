@@ -48,26 +48,23 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
             )
 
     def start_consuming(self, on_message_callback):
-        def _safe_call(action_fn, error_label):
+        def _safe_ack(fn, ack_type):
             try:
-                action_fn()
+                fn()
             except (AMQPConnectionError, AMQPChannelError) as e:
                 raise MessageMiddlewareDisconnectedError(
-                    f"Connection lost on {error_label}: {e}"
+                    f"Connection lost on {ack_type}: {e}"
                 )
             except Exception as e:
-                raise MessageMiddlewareMessageError(f"Error on {error_label}: {e}")
+                raise MessageMiddlewareMessageError(f"Error on {ack_type}: {e}")
 
         def _internal_callback(channel, method, properties, body):
-            ack = lambda: _safe_call(
-                lambda: channel.basic_ack(delivery_tag=method.delivery_tag), "ack"
-            )
-            nack = lambda: _safe_call(
-                lambda: channel.basic_nack(
-                    delivery_tag=method.delivery_tag, requeue=True
-                ),
-                "nack",
-            )
+            def ack():
+                _safe_ack(lambda: channel.basic_ack(delivery_tag=method.delivery_tag), "ack")
+
+            def nack():
+                _safe_ack(lambda: channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True), "nack")
+
             on_message_callback(body, ack, nack)
 
         try:
@@ -127,11 +124,11 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
                 queue="", exclusive=True
             ).method.queue
 
-            for route_key in self._routing_keys:
+            for routing_key in self._routing_keys:
                 self._channel.queue_bind(
                     exchange=self._exchange_name,
                     queue=self._queue_name,
-                    routing_key=route_key,
+                    routing_key=routing_key,
                 )
 
             self._channel.basic_qos(prefetch_count=1)
@@ -141,7 +138,22 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
             )
 
     def send(self, message):
-        pass
+        try:
+            for routing_key in self._routing_keys:
+                self._channel.basic_publish(
+                    exchange=self._exchange_name,
+                    routing_key=routing_key,
+                    body=message,
+                    properties=pika.BasicProperties(delivery_mode=1),
+                )
+        except (AMQPConnectionError, AMQPChannelError) as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"Connection lost while sending message to exchange: {e}"
+            )
+        except Exception as e:
+            raise MessageMiddlewareMessageError(
+                f"Unexpected error while sending message to exchange: {e}"
+            )
 
     def start_consuming(self, on_message_callback):
         pass
