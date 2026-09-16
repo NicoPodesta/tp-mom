@@ -48,15 +48,55 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
             )
 
     def start_consuming(self, on_message_callback):
-        pass
+        def _safe_call(action_fn, error_label):
+            try:
+                action_fn()
+            except (AMQPConnectionError, AMQPChannelError) as e:
+                raise MessageMiddlewareDisconnectedError(
+                    f"Connection lost on {error_label}: {e}"
+                )
+            except Exception as e:
+                raise MessageMiddlewareMessageError(f"Error on {error_label}: {e}")
+
+        def _internal_callback(channel, method, properties, body):
+            ack = lambda: _safe_call(
+                lambda: channel.basic_ack(delivery_tag=method.delivery_tag), "ack"
+            )
+            nack = lambda: _safe_call(
+                lambda: channel.basic_nack(
+                    delivery_tag=method.delivery_tag, requeue=True
+                ),
+                "nack",
+            )
+            on_message_callback(body, ack, nack)
+
+        try:
+            self._channel.basic_consume(
+                queue=self._queue_name,
+                on_message_callback=_internal_callback,
+                auto_ack=False,
+            )
+            self._channel.start_consuming()
+        except (AMQPConnectionError, AMQPChannelError) as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"Connection lost while consuming: {e}"
+            )
+        except Exception as e:
+            raise MessageMiddlewareMessageError(
+                f"Unexpected error while consuming: {e}"
+            )
 
     def stop_consuming(self):
-        pass
+        try:
+            if self._channel and self._channel.is_open:
+                self._channel.stop_consuming()
+        except Exception as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"Connection lost while stopping consumption: {e}"
+            )
 
     def close(self):
         try:
-            if self._channel and self._channel.is_open:
-                self._channel.close()
             if self._connection and self._connection.is_open:
                 self._connection.close()
         except Exception as e:
