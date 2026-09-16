@@ -60,10 +60,17 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
 
         def _internal_callback(channel, method, properties, body):
             def ack():
-                _safe_ack(lambda: channel.basic_ack(delivery_tag=method.delivery_tag), "ack")
+                _safe_ack(
+                    lambda: channel.basic_ack(delivery_tag=method.delivery_tag), "ack"
+                )
 
             def nack():
-                _safe_ack(lambda: channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True), "nack")
+                _safe_ack(
+                    lambda: channel.basic_nack(
+                        delivery_tag=method.delivery_tag, requeue=True
+                    ),
+                    "nack",
+                )
 
             on_message_callback(body, ack, nack)
 
@@ -156,7 +163,47 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
             )
 
     def start_consuming(self, on_message_callback):
-        pass
+        def _safe_ack(fn, ack_type):
+            try:
+                fn()
+            except (AMQPConnectionError, AMQPChannelError) as e:
+                raise MessageMiddlewareDisconnectedError(
+                    f"Connection lost on {ack_type}: {e}"
+                )
+            except Exception as e:
+                raise MessageMiddlewareMessageError(f"Error on {ack_type}: {e}")
+
+        def _internal_callback(channel, method, properties, body):
+            def ack():
+                _safe_ack(
+                    lambda: channel.basic_ack(delivery_tag=method.delivery_tag), "ack"
+                )
+
+            def nack():
+                _safe_ack(
+                    lambda: channel.basic_nack(
+                        delivery_tag=method.delivery_tag, requeue=True
+                    ),
+                    "nack",
+                )
+
+            on_message_callback(body, ack, nack)
+
+        try:
+            self._channel.basic_consume(
+                queue=self._queue_name,
+                on_message_callback=_internal_callback,
+                auto_ack=False,
+            )
+            self._channel.start_consuming()
+        except (AMQPConnectionError, AMQPChannelError) as e:
+            raise MessageMiddlewareDisconnectedError(
+                f"Connection lost while consuming: {e}"
+            )
+        except Exception as e:
+            raise MessageMiddlewareMessageError(
+                f"Unexpected error while consuming: {e}"
+            )
 
     def stop_consuming(self):
         try:
