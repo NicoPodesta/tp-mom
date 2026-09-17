@@ -82,12 +82,12 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
 
     def __init__(self, host, queue_name):
         self._queue_name = queue_name
-        self._endpoint = None
+        self._core = None
 
         try:
-            self._endpoint = _MessageMiddlewareRabbitMQ(host)
-            self._endpoint.channel.queue_declare(queue=self._queue_name, durable=False)
-            self._endpoint.channel.basic_qos(prefetch_count=1)
+            self._core = _MessageMiddlewareRabbitMQ(host)
+            self._core.channel.queue_declare(queue=self._queue_name, durable=False)
+            self._core.channel.basic_qos(prefetch_count=1)
         except Exception as e:
             raise MessageMiddlewareDisconnectedError(
                 f"connecting or declaring queue: {e}"
@@ -95,7 +95,7 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
 
     def send(self, message):
         try:
-            self._endpoint.channel.basic_publish(
+            self._core.channel.basic_publish(
                 exchange="",
                 routing_key=self._queue_name,
                 body=message,
@@ -111,13 +111,13 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
             )
 
     def start_consuming(self, on_message_callback):
-        self._endpoint.start_consuming(self._queue_name, on_message_callback)
+        self._core.start_consuming(self._queue_name, on_message_callback)
 
     def stop_consuming(self):
-        self._endpoint.stop_consuming()
+        self._core.stop_consuming()
 
     def close(self):
-        self._endpoint.close()
+        self._core.close()
 
 
 class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
@@ -125,12 +125,12 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
     def __init__(self, host, exchange_name, routing_keys):
         self._exchange_name = exchange_name
         self._routing_keys = routing_keys
-        self._endpoint = None
+        self._core = None
         self._queue_name = None
 
         try:
-            self._endpoint = _MessageMiddlewareRabbitMQ(host)
-            channel = self._endpoint.channel
+            self._core = _MessageMiddlewareRabbitMQ(host)
+            channel = self._core.channel
             channel.exchange_declare(
                 exchange=self._exchange_name,
                 exchange_type="direct",
@@ -156,7 +156,7 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
     def send(self, message):
         try:
             for routing_key in self._routing_keys:
-                self._endpoint.channel.basic_publish(
+                self._core.channel.basic_publish(
                     exchange=self._exchange_name,
                     routing_key=routing_key,
                     body=message,
@@ -172,10 +172,10 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
             )
 
     def start_consuming(self, on_message_callback):
-        self._endpoint.start_consuming(self._queue_name, on_message_callback)
+        self._core.start_consuming(self._queue_name, on_message_callback)
 
     def stop_consuming(self):
-        self._endpoint.stop_consuming()
+        self._core.stop_consuming()
 
     def close(self):
-        self._endpoint.close()
+        self._core.close()
